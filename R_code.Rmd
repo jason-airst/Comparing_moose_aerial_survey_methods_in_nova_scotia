@@ -1,0 +1,323 @@
+---
+title: "R Code"
+author: "Jason Airst and Jared Tomie"
+output: word_document
+---
+## Stratified Random Block Survey
+
+Packages used:
+```{r}
+library(dplyr)
+```
+
+Datasets:Stratification_2020.csv, Transect_2020.csv, SCF_Survey_2020.csv
+```{r,include=FALSE}
+Stratification_2020 <-read.csv("I:/DNRKENT/Wildlife/Sustainable_Wildlife_Use/Large_Mammal_Section/Moose_ALAL/ALAL_CBH_Survey/Technical report/Data_files/Strat_2020.csv")
+
+Transect_2020 <- read.csv("I:/DNRKENT/Wildlife/Sustainable_Wildlife_Use/Large_Mammal_Section/Moose_ALAL/ALAL_CBH_Survey/Technical report/Data_files/Block_2020.csv")
+
+SCF_Survey_2020 <- read.csv("I:/DNRKENT/Wildlife/Sustainable_Wildlife_Use/Large_Mammal_Section/Moose_ALAL/ALAL_CBH_Survey/Technical report/Data_files/Intensive_2020.csv")
+```
+
+#### Stratifying survey units into low, medium, high strata using K-mean clustering of transect data. Total moose estimate was calculated by ``Total_Moose_Estimate = round(Moose_Seen + (Moose_Track/4),0)``. One survey unit (SU 356) with a total moose estimate of 11 (4.73 km^2) was excluded from the analysis due to  K-mean cluster analysis being sensitve to outliers. It was later manually assigned to the high stratum. 
+```{r}
+Stratification_2020a<-subset(Stratification_2020,SU!=356)# remove SU 356 
+strat<- kmeans (Stratification_2020a$Total_Moose_Estimate,centers=3,iter.max=100,nstart=1)
+strat_cluster<- cbind(Stratification_2020a,strat$cluster)
+strat_cluster$`strat$cluster`<-factor(strat_cluster$`strat$cluster`)
+strat_cluster2 <- strat_cluster %>% mutate(`strat$cluster` = reorder(`strat$cluster`, Total_Moose_Estimate, mean))# needed to reorder clusters so that they are ordered Low, Medium, and High
+levels(strat_cluster2$`strat$cluster`) <- c("Low", "Medium", "High") # rename clusters
+
+strat_cluster2[nrow(strat_cluster2) + 1, ] <- data.frame(2020, 356, 4.72946, 4.72946, 0.765838,"Park", 10, 2, 3, 0.5, 11, "High") # add back in the SU 356 and classify as High 
+
+summary(strat_cluster2$`strat$cluster`)
+```
+
+#### calculating the sightability correction factor using the standand and intensive block surveys. 
+```{r}
+sightability<-function(u,v)# sightability correct function for small sample sized from Gasaway et al. 1986
+      {
+      n<-length(u)
+      s.v<-var(v)
+      s.uv<- sum(u*v)/(n-1) -  sum(u)*sum(v)/(n*(n-1)) 
+      scf<-sum(u)/sum(v) + n*s.uv/sum(v)^2 - n*sum(u)*s.v / sum(v)^3 # correction factor
+
+      
+      s.q<- ( sum(u^2) - 2*scf*sum(u*v) + scf^2*sum(v^2) ) / (n-1)
+      Var.scf<-n/sum(v)^2 * s.q # standard error scf
+      return(c(scf,Var.scf,n))
+     
+      }
+
+u<- SCF_Survey_2020$Moose_Intensive
+v<- SCF_Survey_2020$Moose_Standard
+
+u[u<v]<-v[u<v]# If more moose were seen in the standard survey compared to the intensive survey within a block, then the number of moose seen in the intensive survey  was raised to match the standard survey
+
+SCF<-sightability(u=u,v=v)   
+
+GHE_Sight<-data.frame(SCF_GHE = SCF[1], Var_GHE_scf = SCF[2], n_GHE = SCF[3])
+GHE_Sight
+
+SCF_Park_2020<- subset(SCF_Survey_2020,Park=="Y")# Park only
+u= SCF_Park_2020$Moose_Intensive
+v=  SCF_Park_2020$Moose_Standard
+
+SCF_Park<-sightability(u=u,v=v) 
+
+Park_sight<-data.frame(SCF_Park =SCF_Park[1],Var_Park_scf=SCF_Park[2],n_Park=SCF_Park[3])
+
+Park_sight
+```
+
+#### calculating the abundance of moose and density of moose across the Greater highland ecosystem
+```{r}
+total.moose.GHE<-as.vector(with(Transect_2020,by(Moose,Stratum,sum))) # of moose in each stratum
+
+total.Area.GHE<- as.vector(with(Transect_2020,by(Area,Stratum,sum))) # total area of each stratum 
+
+stratum.density.GHE<- total.moose.GHE/total.Area.GHE # average moose density in each stratum 
+
+A.vec<-c(51.35, 3262.48, 567.21)# get the total area of each stratum.  Order is alphabetical (H,L,M)
+     
+N.vec<-c(11, 759, 123)# get the number of SUs in each stratum. Order is alphabetical (H,L,M)
+
+get.Var.T_i<-function(dat,A.vec,N.vec) # sampling variance function
+{Var.T_i<-NULL
+ strata<-sort(unique( dat$Stratum))
+   for(i in 1:length(strata))
+         {d<-dat[dat$Stratum==strata[i],]# survey data for this stratum
+         A <- A.vec[i]# total stratum area
+         N_i<- N.vec[i]# total number of survey units in this strata
+         n_i<-dim(d)[1]# number of survey units sampled in this strata
+         x_bar<-mean(d$Area)# mean size of survey unit in this strata
+         d_i<- sum(d$Moose) / sum(d$Area)# observed moose density for this stratum
+         s<- (sum(d$Moose^2) - 2* d_i*sum(d$Moose* d$Area) + d_i^2*sum( d$Area^2) ) / (n_i-1)# sampling variance for the stratum
+         Var.T_i[i]<-A^2*( 1/x_bar^2) * s/n_i * (1 - n_i/N_i)}# stratum sampling variance (note the finite pop correction at the end)
+names(Var.T_i)<-strata# assign the stratum names and return the values
+return(Var.T_i)}
+
+
+T_i<-stratum.density.GHE*A.vec # Calculate the number of moose in each stratum
+Var.T_i<-get.Var.T_i(Transect_2020,A.vec=A.vec,N.vec=N.vec)# Calculate the sampling variance for each stratum
+
+T_0 = sum(T_i) # Calculate the moose population for the whole GHE
+Var.T_0<-sum(Var.T_i) # Calculate the sample variance for the whole GHE
+
+v_0 <- Var.T_0^2 /  sum(Var.T_i^2/(N.vec-1))# degrees of freedom 
+
+scf<-SCF[1]
+Var.scf<-SCF[2]
+T_e = T_0*scf # Calculate the corrected population estimate 
+Var.T_e = scf^2*Var.T_0 + T_0^2*Var.scf - Var.scf*Var.T_0 # Calculate the corrected sampling variance
+
+v_e <- min (v_0,SCF[3])# degrees of freedom to use for the confidence interval
+
+CI<-T_e +  c(-1,1)*qt(p=.95,df=v_e)*sqrt(Var.T_e)# Calculate a confidence interval using a t-distribution
+
+Density<-T_e/sum(strat_cluster2$Area_km2)
+percent <- sqrt(Var.T_e)/T_e
+se_GHE_abun<-sqrt(Var.T_e/length(Transect_2020$Stratum))
+
+GHE_pop_estimates<-data.frame(GHE_Density=Density, GHE_Abundance= T_e, df_GHE=v_e, GHE_CI_low=CI[1], GHE_CI_hi=CI[2], CV = percent)
+GHE_pop_estimates
+```
+
+#### calculating the abundance of moose and density of moose in the Cape Breton Highland National Park
+```{r}
+Park_Transect_2020<-subset(Transect_2020,Park=="Y")
+total.moose.park<-as.vector(with(Park_Transect_2020,by(Moose,Stratum,sum))) # of moose in each stratum within CBHNP
+
+total.Area.Park<- as.vector(with(Park_Transect_2020,by(Area,Stratum,sum))) # total area of each stratum within CBHNP
+
+stratum.density.Park<- total.moose.park/total.Area.Park # average moose density in each stratum within CBHNP
+
+A.vec_Park<-c(41.89, 683.86, 221.76)# get the total area of each stratum in CBHNP.  Order is alphabetical (H,L,M)
+     
+N.vec_Park<-c(9, 170, 52)# get the number of SUs in each stratum in CBHNP. Order is alphabetical (H,L,M)
+
+T_i_Park<-stratum.density.Park*A.vec_Park # Calculate the number of moose in each stratum
+
+Var.T_i_Park<-get.Var.T_i(Park_Transect_2020,A.vec = A.vec_Park,N.vec = N.vec_Park)# Calculate the sampling variance for each stratum within CBHNP
+
+T_0_Park<- sum(T_i_Park) # Calculate the moose population for CBHNP
+Var.T_0_Park<- sum(Var.T_i_Park) # Calculate the sample variance for CBHNP 
+
+v_0_Park <- Var.T_0_Park^2 /  sum(Var.T_i_Park^2/(N.vec_Park-1))# degrees of freedom for CBHNP
+
+scf_Park<-SCF_Park[1]
+Var.scf_Park<-SCF_Park[2]
+T_e_Park = T_0_Park*scf_Park # Calculate the corrected population estimate for CBHNP
+Var.T_e_Park<- scf_Park^2*Var.T_0_Park + T_0_Park^2* Var.scf_Park - Var.scf_Park* Var.T_0_Park # Calculate the corrected sampling variance for CBHNP
+
+v_e_Park <- min (v_0,SCF[3])# degrees of freedom to use for the confidence interval
+
+CI_Park<-T_e_Park +  c(-1,1)*qt(p=.95,df=v_e_Park)*sqrt(Var.T_e_Park)# Calculate a confidence interval using a t-distribution
+
+Density_Park<-T_e_Park/sum(strat_cluster2$Park_Area)
+
+percent_Park <- sqrt(Var.T_e_Park)/T_e_Park
+se_park_abun<-sqrt(Var.T_e_Park)/v_e_Park
+
+CBHNP_pop_estimates<-data.frame(CBHNP_Density=Density_Park, CBHNP_Abundance= T_e_Park, df_CBHNP=v_e_Park, CBHNP_CI_low=CI_Park[1], CBHNP_CI_hi=CI_Park[2], CV_CBHNP = percent_Park)
+CBHNP_pop_estimates
+```
+
+## Distance Sampling
+Packages used:
+```{r}
+library(Distance)
+```
+
+Datasets:Distance_2020.csv
+```{r,include=FALSE}
+Distance_2020 <- read.csv("I:/DNRKENT/Wildlife/Sustainable_Wildlife_Use/Large_Mammal_Section/Moose_ALAL/ALAL_CBH_Survey/Technical report/Data_files/Distance_2020.csv")
+```
+
+#### Half normal model with no covariates 
+```{r}
+Distance_1a<-ds(Distance_2020,key = "hn",truncation = "10%",formula = ~1)
+summary(Distance_1a)
+```
+
+#### Uniform normal model with 2 cosine corrections and no covariates 
+```{r}
+Distance_1b<-ds(Distance_2020,key = "un",truncation = "10%",formula = ~1)
+```
+
+#### normal model with group size as a covariates 
+```{r}
+Distance_2a<-ds(Distance_2020,key = "hn",truncation = "10%",formula = ~size)
+summary(Distance_2a)
+```
+
+#### normal model with group size as a covariate 
+```{r}
+Distance_2b<-ds(Distance_2020,key = "hn",truncation = "10%",formula = ~size + Activity)
+summary(Distance_2b)
+plot(Distance_2b)
+```
+
+## Density Surface Models
+
+Packages used:
+```{r}
+library(Distance)
+library(dsm)
+library(DHARMa)
+```
+
+Datasets:Distance_2020.csv, Obs_2020.csv, Seg_2020.csv, Pred_2020.csv
+```{r,include=FALSE}
+Distance_2020 <- read.csv("I:/DNRKENT/Wildlife/Sustainable_Wildlife_Use/Large_Mammal_Section/Moose_ALAL/ALAL_CBH_Survey/Technical report/Data_files/Distance_2020.csv")
+
+Obs_2020 <- read.csv("I:/DNRKENT/Wildlife/Sustainable_Wildlife_Use/Large_Mammal_Section/Moose_ALAL/ALAL_CBH_Survey/Technical report/Data_files/Obs_2020.csv")
+
+Seg_2020 <- read.csv("I:/DNRKENT/Wildlife/Sustainable_Wildlife_Use/Large_Mammal_Section/Moose_ALAL/ALAL_CBH_Survey/Technical report/Data_files/Seg_2020.csv")
+
+Pred_2020 <- read.csv("I:/DNRKENT/Wildlife/Sustainable_Wildlife_Use/Large_Mammal_Section/Moose_ALAL/ALAL_CBH_Survey/Technical report/Data_files/Pred_2020.csv")
+```
+
+#### Null model data distribution comparison using the detection curve from``Distance_2a`` 
+```{r}
+Distance_2b<-ds(Distance_2020,key = "hn",truncation = "10%",formula = ~size)
+
+DSM_1a <- dsm(abundance.est~NULL,Distance_2b$ddf,segment.data = Seg_2020, observation.data = Obs_2020,family = quasipoisson())
+
+DSM_1b <- dsm(abundance.est~NULL,Distance_2b$ddf,segment.data = Seg_2020, observation.data = Obs_2020,family = nb())
+
+DSM_1c <- dsm(abundance.est~NULL,Distance_2b$ddf,segment.data = Seg_2020, observation.data = Obs_2020,family = tw())
+
+qq.gam(DSM_1a)
+
+simulationneg<-simulateResiduals(fittedModel = DSM_1b)
+plotQQunif(simulationOutput = simulationneg, 
+           testDispersion = T,
+           testUniformity = T,
+           testOutliers = T)
+
+simulationtw<-simulateResiduals(fittedModel = DSM_1c)
+plotQQunif(simulationOutput = simulationtw, 
+           testDispersion = T,
+           testUniformity = T,
+           testOutliers = T)
+
+AIC(DSM_1b, DSM_1c)
+```
+
+#### Comparing a Null model that use segment averaging and the detection curve from``Distance_1a`` to a Null model that use Horvitz-Thompson-like estimator and the detection curve from``Distance_1a``
+```{r}
+Distance_1a<-ds(Distance_2020,key = "hn",truncation = "10%",formula = ~1)
+
+DSM_seg <- dsm(count~NULL,Distance_1a$ddf,segment.data = Seg_2020, observation.data = Obs_2020,family = tw())
+
+Distance_2b<-ds(Distance_2020,key = "hn",truncation = "10%",formula = ~size)
+
+DSM_HTE <- dsm(abundance.est~NULL,Distance_2b$ddf,segment.data = Seg_2020, observation.data = Obs_2020,family = tw())
+
+AIC(DSM_seg, DSM_HTE)
+```
+
+#### Tweedie model using the detection curve from ``Distance_2a`` and ``Distance_2b``, the coefficents of forest presence and distance to roads, and the non-linear effect of location
+```{r}
+Distance_2a<-ds(Distance_2020,key = "hn",truncation = "10%",formula = ~size)
+
+DSM_2a <- dsm(abundance.est~s(X,Y)+For_non,Distance_2a$ddf,segment.data = Seg_2020, observation.data = Obs_2020,family = tw())
+
+
+Distance_2b<-ds(Distance_2020,key = "hn",truncation = "10%",formula = ~size + Activity)
+
+DSM_2b <- dsm(abundance.est~s(X,Y)+For_non,Distance_2b$ddf,segment.data = Seg_2020, observation.data = Obs_2020,family = tw())
+
+AIC(DSM_2a, DSM_2b)
+
+summary(DSM_2a)
+
+pred.varprop <- split(Pred_2020, 1:nrow(Pred_2020))
+DSM_2_var <- dsm.var.gam(DSM_2a, pred.data=pred.varprop, off.set=Pred_2020$area)
+DSM_2_var
+
+Park_DSM<-subset(Pred_2020,Moose_Zone=="Park")# CBGHNP only
+pred.varprop_Park <- split(Park_DSM, 1:nrow(Park_DSM))
+DSM_2_var_Park <- dsm.var.gam(DSM_2a, pred.data=pred.varprop_Park, off.set=Park_DSM$area)
+DSM_2_var_Park
+```
+
+## Model Comparison
+
+### GHI
+#### T-value random stratified block verses distance sampling
+```{r}
+T_RanDist_GHE<-(2322-2158)/(315.76+379.93)
+T_RanDist_GHE
+```
+
+#### T-value random stratified block verses density surface model
+```{r}
+T_RanDSM_GHE<-(2322 - 1827)/(315.76 + 225.06)
+T_RanDSM_GHE
+```
+
+#### T-value distance sampling verses density surface model
+```{r}
+T_DistDSM_GHE<-(2158-1827)/( 373.93 + 225.06)
+T_DistDSM_GHE
+```
+
+### Park
+#### T-value random stratified block verses distance sampling
+```{r}
+T_RanDist_Park<-(1025-838)/(121.82+293.94)
+T_RanDist_Park
+```
+#### T-value random stratified block verses density surface model
+```{r}
+T_RanDSM_Park<-(838-671)/ (121.82 + 104.85)
+T_RanDSM_Park
+```
+
+#### T-value distance sampling verses density surface model
+```{r}
+T_DistDSM_Park<-(1025-671)/(293.94 + 104.85)
+T_DistDSM_Park
+```
