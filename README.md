@@ -1,7 +1,7 @@
 # Comparing Moose Aerial Survey Methods in Nova Scotia: Distance Sampling, Density Surface Models, and Stratified Random Block Surveys
 ## Suplimentary Materials
 ## List of files:
-### R_code - R markdown file containing the code use to analyze data in the paper
+### R_code - R markdown file containing the code used to analyze data in the paper
 #
 ### Distance_2020 - Distance sampling data used to generate moose estimates via traditional distance sampling. Data also used to generate detection curves for density surface models
 #### Sample.Label - Survey line number
