@@ -3,7 +3,7 @@
 ## List of files:
 ### R_code - R markdown file containing the code used to analyze data in the paper
 #
-### Distance_2020 - Distance sampling data used to generate moose estimates via traditional distance sampling. Data also used to generate detection curves for density surface models
+### Distance_2020 - Distance sampling data used to generate moose estimates via distance sampling. Data also used to generate detection curves for density surface models
 #### Sample.Label - Survey line number
 #### Effort - length of survey line
 #### Regional.Label- Region of survey line
